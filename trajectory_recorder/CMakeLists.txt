@@ -8,15 +8,12 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(std_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 
-add_executable(talker src/publisher_lambda_function.cpp)
 add_executable(trajectory_recorder src/trajectory_recorder.cpp)
-ament_target_dependencies(talker rclcpp std_msgs)
-ament_target_dependencies(trajectory_recorder rclcpp std_msgs)
+ament_target_dependencies(trajectory_recorder rclcpp nav_msgs)
 
 install(TARGETS
-  talker
   trajectory_recorder
   DESTINATION lib/${PROJECT_NAME})
 

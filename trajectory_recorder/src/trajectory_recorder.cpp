@@ -15,30 +15,74 @@
 #include <memory>
 
 #include "rclcpp/rclcpp.hpp"
-#include "std_msgs/msg/string.hpp"
+#include "nav_msgs/msg/odometry.hpp"
+#include <fstream>
+#include <filesystem> 
 
-class MinimalSubscriber : public rclcpp::Node
+class TrajectoryRecorder : public rclcpp::Node
 {
 public:
-  MinimalSubscriber()
-  : Node("minimal_subscriber")
+  // Constructor
+  TrajectoryRecorder(const std::string &filename)
+      : Node("trajectory_recorder")
   {
-    auto topic_callback =
-      [this](std_msgs::msg::String::UniquePtr msg) -> void {
-        RCLCPP_INFO(this->get_logger(), "I heard: '%s'", msg->data.c_str());
-      };
+    // Path to file
+    std::filesystem::path file_path = std::filesystem::path(__FILE__).parent_path().parent_path() / "trajectories" / (filename + ".csv");
+
+    // Open CSV file
+    csv_file.open(file_path);
+    if (!csv_file.is_open())
+    {
+      RCLCPP_ERROR(this->get_logger(), "Failed to open CSV file: %s", file_path.c_str());
+    }
+    csv_file << "x,y,z\n";
+
+    // Define subscription_
     subscription_ =
-      this->create_subscription<std_msgs::msg::String>("topic", 10, topic_callback);
+        this->create_subscription<nav_msgs::msg::Odometry>("/ov_msckf/loop_pose", 10, std::bind(&TrajectoryRecorder::topic_callback, this, std::placeholders::_1));
   }
 
 private:
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr subscription_;
+  // Initialize subscription_
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subscription_;
+
+  // Initialize pose information
+  double x;
+  double y;
+  double z;
+
+  // Initialize fstream
+  std::ofstream csv_file;
+
+  // Define callback
+  void topic_callback(nav_msgs::msg::Odometry::SharedPtr msg)
+  {
+    this->x = msg->pose.pose.position.x;
+    this->y = msg->pose.pose.position.y;
+    this->z = msg->pose.pose.position.z;
+
+    csv_file << x << "," << y << "," << z << "\n";
+    csv_file.flush();
+
+    RCLCPP_INFO(this->get_logger(), "Pose x = %f", msg->pose.pose.position.x);
+  }
 };
 
-int main(int argc, char * argv[])
+int main(int argc, char *argv[])
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<MinimalSubscriber>());
+
+  // Default file name for trajectory csv file
+  std::string filename = "trajectory";
+
+  // If trajectory name argument is passed assign it to filename
+  if (argc > 1)
+  {
+    filename = argv[1];
+  }
+
+  // Spin the node and pass filename as an argument
+  rclcpp::spin(std::make_shared<TrajectoryRecorder>(filename));
   rclcpp::shutdown();
   return 0;
 }
