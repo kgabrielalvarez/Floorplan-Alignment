@@ -35,7 +35,7 @@ public:
     {
       RCLCPP_ERROR(this->get_logger(), "Failed to open CSV file: %s", file_path.c_str());
     }
-    csv_file << "x,y,z\n";
+    csv_file << "x,y,z,qx,qy,qz,qw\n";
 
     // Define subscription_
     subscription_ =
@@ -46,10 +46,15 @@ private:
   // Initialize subscription_
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subscription_;
 
-  // Initialize pose information
+  // Initialize position information
   double x;
   double y;
   double z;
+  // Initialize orientation information
+  double qx;
+  double qy;
+  double qz;
+  double qw;
 
   // Initialize fstream
   std::ofstream csv_file;
@@ -60,11 +65,13 @@ private:
     this->x = msg->pose.pose.position.x;
     this->y = msg->pose.pose.position.y;
     this->z = msg->pose.pose.position.z;
+    this->qx = msg->pose.pose.orientation.x;
+    this->qy = msg->pose.pose.orientation.y;
+    this->qz = msg->pose.pose.orientation.z;
+    this->qw = msg->pose.pose.orientation.z;
 
-    csv_file << x << "," << y << "," << z << "\n";
+    csv_file << x << "," << y << "," << z << "," << qx << "," << qy << "," << qz << "," << qw << "\n";
     csv_file.flush();
-
-    RCLCPP_INFO(this->get_logger(), "Pose x = %f", msg->pose.pose.position.x);
   }
 };
 
