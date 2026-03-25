@@ -16,8 +16,9 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/odometry.hpp"
+#include "nav_msgs/msg/path.hpp"
 #include <fstream>
-#include <filesystem> 
+#include <filesystem>
 
 class TrajectoryRecorder : public rclcpp::Node
 {
@@ -39,38 +40,49 @@ public:
 
     // Define subscription_
     subscription_ =
-        this->create_subscription<nav_msgs::msg::Odometry>("/ov_msckf/loop_pose", 10, std::bind(&TrajectoryRecorder::topic_callback, this, std::placeholders::_1));
+        this->create_subscription<nav_msgs::msg::Path>("/ov_msckf/pathimu", 10, std::bind(&TrajectoryRecorder::topic_callback, this, std::placeholders::_1));
   }
 
 private:
   // Initialize subscription_
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subscription_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr subscription_;
 
-  // Initialize position information
-  double x;
-  double y;
-  double z;
-  // Initialize orientation information
-  double qx;
-  double qy;
-  double qz;
-  double qw;
+  // Initialize variable to keep track of number of poses
+  size_t last_written_index_ = 0;
 
   // Initialize fstream
   std::ofstream csv_file;
 
   // Define callback
-  void topic_callback(nav_msgs::msg::Odometry::SharedPtr msg)
+  void topic_callback(nav_msgs::msg::Path::SharedPtr msg)
   {
-    this->x = msg->pose.pose.position.x;
-    this->y = msg->pose.pose.position.y;
-    this->z = msg->pose.pose.position.z;
-    this->qx = msg->pose.pose.orientation.x;
-    this->qy = msg->pose.pose.orientation.y;
-    this->qz = msg->pose.pose.orientation.z;
-    this->qw = msg->pose.pose.orientation.z;
+    const auto &poses = msg->poses;
 
-    csv_file << x << "," << y << "," << z << "," << qx << "," << qy << "," << qz << "," << qw << "\n";
+    if (poses.size() <= last_written_index_)
+    {
+      return; // does nothing
+    }
+
+    for (size_t i = last_written_index_; i < poses.size(); ++i)
+    {
+      const auto &p = poses[i].pose;
+
+      double x = p.position.x;
+      double y = p.position.y;
+      double z = p.position.z;
+
+      double qx = p.orientation.x;
+      double qy = p.orientation.y;
+      double qz = p.orientation.z;
+      double qw = p.orientation.w;
+
+      RCLCPP_INFO(this->get_logger(), "x position: %f", x);
+
+      csv_file << x << "," << y << "," << z << ","
+               << qx << "," << qy << "," << qz << "," << qw << "\n";
+    }
+
+    last_written_index_ = poses.size();
     csv_file.flush();
   }
 };
