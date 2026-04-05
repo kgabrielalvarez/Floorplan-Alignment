@@ -9,9 +9,16 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(OpenCV REQUIRED)
 
 add_executable(line_extractor src/line_extractor.cpp)
-ament_target_dependencies(line_extractor rclcpp sensor_msgs)
+ament_target_dependencies(line_extractor 
+  rclcpp
+  sensor_msgs
+  cv_bridge
+  OpenCV
+)
 
 install(TARGETS
   line_extractor
