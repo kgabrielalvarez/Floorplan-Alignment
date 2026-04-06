@@ -20,10 +20,10 @@
 #include "opencv2/objdetect.hpp"
 #include "opencv2/line_descriptor.hpp"
 #include "vector"
-#include "map"
-#include "fstream"
-#include "iostream"
-#include "filesystem"
+#include "rosbag2_cpp/writer.hpp"
+#include "rosbag2_storage/serialized_bag_message.hpp"
+#include "floorplan_alignment_interfaces/msg/lines_in_frame.hpp"
+#include "floorplan_alignment_interfaces/msg/line_with_descriptor.hpp"
 
 class LineExtractor : public rclcpp::Node
 {
@@ -38,35 +38,13 @@ public:
 
     // Define LBD
     lbd_ = cv::line_descriptor::BinaryDescriptor::createBinaryDescriptor();
-  }
 
-  // Destructor
-  ~LineExtractor()
-  {
-    std::filesystem::path src_path(__FILE__);
-    auto base_path = src_path.parent_path().parent_path();
-    auto output_dir = base_path / "lines_and_descriptors";
-    auto file_path = output_dir / "keylines.yml";
-    cv::FileStorage fs(file_path.string(), cv::FileStorage::WRITE);
-    fs << "frames" << "[";
-    for (const auto &pair : keyline_map_)
-    {
-      fs << "{";
-      fs << "timestamp" << pair.first.seconds();
-      fs << "keylines" << "[";
-      for (const auto &kl : pair.second)
-      {
-        fs << "{"
-          << "p1" << cv::Point2f(kl.startPointX, kl.startPointY)
-          << "p2" << cv::Point2f(kl.endPointX, kl.endPointY)
-          << "}";
-      }
-      fs << "]";
-      fs << "}";
-    }
-    fs << "]";
-    fs.release();
-    RCLCPP_INFO(this->get_logger(), "Saved %zu frames to keylines.yml", keyline_map_.size());
+    // Define rosbag writer
+    // writer_ = std::make_unique<rosbag2_cpp::Writer>();
+    // writer_->open("lines_and_descriptors_bag");
+
+    // Define publisher
+    pub_ = this->create_publisher<floorplan_alignment_interfaces::msg::LinesInFrame>("/lines_with_descriptors", 10);
   }
 
 private:
@@ -76,11 +54,11 @@ private:
   // Initialize Linear Binary Descriptor (LBD)
   cv::Ptr<cv::line_descriptor::BinaryDescriptor> lbd_;
 
-  // Min length line must have to store it
-  const float min_line_length_ = 30.0f;
+  // Initialize rosbag writer
+  // std::unique_ptr<rosbag2_cpp::Writer> writer_;
 
-  // Map to store lines
-  std::map<rclcpp::Time, std::vector<cv::line_descriptor::KeyLine>> keyline_map_;
+  // Initialize publisher
+  rclcpp::Publisher<floorplan_alignment_interfaces::msg::LinesInFrame>::SharedPtr pub_;
 
   // Define callback
   void imageCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg)
@@ -105,16 +83,50 @@ private:
       cv::Point2f pt2 = cv::Point2f(kl.endPointX, kl.endPointY);
 
       // Draw line
-      cv::line(img, pt1, pt2, cv::Scalar(255, 0, 0), 2);
+      cv::line(img, pt1, pt2, cv::Scalar(255), 2);
     }
 
     // Define descriptors
     cv::Mat descriptors;
     lbd_->compute(img, keylines, descriptors);
 
-    // Map to store lines
-    rclcpp::Time timestamp = msg->header.stamp;
-    keyline_map_[timestamp] = keylines;
+    // Save lines and descriptors to msg
+    floorplan_alignment_interfaces::msg::LinesInFrame lines_in_frame_msg;
+    lines_in_frame_msg.header.stamp = msg->header.stamp;
+    for (size_t i = 1; i < keylines.size(); i++)
+    {
+      // Start and end points
+      floorplan_alignment_interfaces::msg::LineWithDescriptor lwd;
+      lwd.start.x = keylines[i].startPointX;
+      lwd.start.y = keylines[i].startPointY;
+      lwd.start.z = 0.0;
+      lwd.end.x = keylines[i].endPointX;
+      lwd.end.y = keylines[i].endPointY;
+      lwd.end.z = 0.0;
+
+      // Descriptor
+      cv::Mat desc_row = descriptors.row((int)i);
+      lwd.descriptor.assign(desc_row.datastart, desc_row.dataend);
+
+      // Add to lines in frame msg
+      lines_in_frame_msg.lines.push_back(lwd);
+    }
+
+    // Publish lines with descriptors
+    pub_->publish(lines_in_frame_msg);
+
+    // Write msg to rosbag
+    // auto bag_msg = std::make_shared<rosbag2_storage::SerializedBagMessage>();
+    // bag_msg->time_stamp = msg->header.stamp.sec * 1'000'000'000ULL + msg->header.stamp.nanosec;
+    // bag_msg->topic_name = "/lines_with_descriptors";
+    // rclcpp::Serialization<floorplan_alignment_interfaces::msg::LinesInFrame> serializer;
+    // rclcpp::SerializedMessage serialized_msg;
+    // serializer.serialize_message(&lines_in_frame_msg, &serialized_msg);
+    // bag_msg->serialized_data = std::vector<uint8_t>(
+    //     serialized_msg.get_rcl_serialized_message().buffer,
+    //     serialized_msg.get_rcl_serialized_message().buffer +
+    //         serialized_msg.get_rcl_serialized_message().buffer_length);
+    // writer_->write(bag_msg);
 
     // Display image with detected lines
     cv::imshow("Camera Frame", img);
