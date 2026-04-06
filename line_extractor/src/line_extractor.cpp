@@ -18,15 +18,12 @@
 #include "opencv2/imgproc.hpp"
 #include "opencv2/core.hpp"
 #include "opencv2/objdetect.hpp"
+#include "opencv2/line_descriptor.hpp"
 #include "vector"
 #include "map"
-
-// Class to store 2D lines
-struct Line2D
-{
-    cv::Point2f p1;
-    cv::Point2f p2;
-};
+#include "fstream"
+#include "iostream"
+#include "filesystem"
 
 class LineExtractor : public rclcpp::Node
 {
@@ -39,22 +36,51 @@ public:
         "/cam0/image_raw/compressed", 10,
         std::bind(&LineExtractor::imageCallback, this, std::placeholders::_1));
 
-    // Initialize LSD
-    lsd_ = cv::createLineSegmentDetector(cv::LSD_REFINE_STD);
+    // Define LBD
+    lbd_ = cv::line_descriptor::BinaryDescriptor::createBinaryDescriptor();
+  }
+
+  // Destructor
+  ~LineExtractor()
+  {
+    std::filesystem::path src_path(__FILE__);
+    auto base_path = src_path.parent_path().parent_path();
+    auto output_dir = base_path / "lines_and_descriptors";
+    auto file_path = output_dir / "keylines.yml";
+    cv::FileStorage fs(file_path.string(), cv::FileStorage::WRITE);
+    fs << "frames" << "[";
+    for (const auto &pair : keyline_map_)
+    {
+      fs << "{";
+      fs << "timestamp" << pair.first.seconds();
+      fs << "keylines" << "[";
+      for (const auto &kl : pair.second)
+      {
+        fs << "{"
+          << "p1" << cv::Point2f(kl.startPointX, kl.startPointY)
+          << "p2" << cv::Point2f(kl.endPointX, kl.endPointY)
+          << "}";
+      }
+      fs << "]";
+      fs << "}";
+    }
+    fs << "]";
+    fs.release();
+    RCLCPP_INFO(this->get_logger(), "Saved %zu frames to keylines.yml", keyline_map_.size());
   }
 
 private:
   // Initialize subscriber
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr sub_;
 
-  // Initialize Line Segment Detector (LSD)
-  cv::Ptr<cv::LineSegmentDetector> lsd_;
-
-  // Initialize map to store detected lines
-  std::map<rclcpp::Time, std::vector<Line2D>> lines_timestamped_;
+  // Initialize Linear Binary Descriptor (LBD)
+  cv::Ptr<cv::line_descriptor::BinaryDescriptor> lbd_;
 
   // Min length line must have to store it
   const float min_line_length_ = 30.0f;
+
+  // Map to store lines
+  std::map<rclcpp::Time, std::vector<cv::line_descriptor::KeyLine>> keyline_map_;
 
   // Define callback
   void imageCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg)
@@ -66,39 +92,33 @@ private:
       RCLCPP_WARN(this->get_logger(), "Empty image frame");
       return;
     }
-    else {
-      RCLCPP_INFO(this->get_logger(), "Image received");
-    }
 
     // Detect lines
-    std::vector<cv::Vec4f> lines_cv;
-    lsd_->detect(img, lines_cv);
+    std::vector<cv::line_descriptor::KeyLine> keylines;
+    lbd_->detect(img, keylines);
 
-    // Store detected lines
-    std::vector<Line2D> lines;
-    for (const auto &l : lines_cv)
+    // Visualize lines
+    for (const auto &kl : keylines)
     {
-      // Get line from lines_cv
-      Line2D line{cv::Point2f(l[0], l[1]), cv::Point2f(l[2], l[3])};
+      // Get ends of line
+      cv::Point2f pt1 = cv::Point2f(kl.startPointX, kl.startPointY);
+      cv::Point2f pt2 = cv::Point2f(kl.endPointX, kl.endPointY);
 
-      // Filter out lines that are too short
-      float line_length = cv::norm(line.p2 - line.p1);
-      if (line_length < min_line_length_) continue;
-
-      lines.push_back(line);
-
-      // Add detected lines to image
-      cv::line(img, line.p1, line.p2, cv::Scalar(0, 0, 255), 2);
+      // Draw line
+      cv::line(img, pt1, pt2, cv::Scalar(255, 0, 0), 2);
     }
+
+    // Define descriptors
+    cv::Mat descriptors;
+    lbd_->compute(img, keylines, descriptors);
+
+    // Map to store lines
     rclcpp::Time timestamp = msg->header.stamp;
-    lines_timestamped_[timestamp] = lines;
+    keyline_map_[timestamp] = keylines;
 
     // Display image with detected lines
     cv::imshow("Camera Frame", img);
     cv::waitKey(1);
-
-    // Logging message
-    RCLCPP_INFO(this->get_logger(), "%zu lines detected", lines.size());
   }
 };
 
