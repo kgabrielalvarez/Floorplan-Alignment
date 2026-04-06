@@ -14,55 +14,112 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 #include "opencv2/opencv.hpp"
 #include "opencv2/imgproc.hpp"
 #include "opencv2/core.hpp"
 #include "opencv2/objdetect.hpp"
 #include "opencv2/line_descriptor.hpp"
 #include "vector"
-#include "rosbag2_cpp/writer.hpp"
-#include "rosbag2_storage/serialized_bag_message.hpp"
 #include "floorplan_alignment_interfaces/msg/lines_in_frame.hpp"
 #include "floorplan_alignment_interfaces/msg/line_with_descriptor.hpp"
+#include <fstream>
+#include <filesystem>
 
 class LineExtractor : public rclcpp::Node
 {
 public:
   // Constructor
-  LineExtractor() : Node("line_extractor")
+  LineExtractor(const std::string &poses_file_name, const std::string &lines_file_name)
+      : Node("line_extractor")
   {
-    // Define subscriber
-    sub_ = this->create_subscription<sensor_msgs::msg::CompressedImage>(
+    // Define line subscriber
+    sub_lines_ = this->create_subscription<sensor_msgs::msg::CompressedImage>(
         "/cam0/image_raw/compressed", 10,
         std::bind(&LineExtractor::imageCallback, this, std::placeholders::_1));
+
+    // Define pose subscriber
+    sub_poses_ = this->create_subscription<nav_msgs::msg::Odometry>(
+        "/ov_msckf/poseimu", 10,
+        std::bind(&LineExtractor::poseCallback, this, std::placeholders::_1));
 
     // Define LBD
     lbd_ = cv::line_descriptor::BinaryDescriptor::createBinaryDescriptor();
 
-    // Define rosbag writer
-    // writer_ = std::make_unique<rosbag2_cpp::Writer>();
-    // writer_->open("lines_and_descriptors_bag");
+    // Define LBDM
+    lbdm_ = cv::line_descriptor::BinaryDescriptorMatcher::createBinaryDescriptorMatcher();
 
-    // Define publisher
-    pub_ = this->create_publisher<floorplan_alignment_interfaces::msg::LinesInFrame>("/lines_with_descriptors", 10);
+    // Define CSV file paths
+    poses_file_path_ = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() / "poses_csv_files" / (poses_file_name + ".csv");
+    lines_file_path_ = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() / "lines_csv_files" / (lines_file_name + ".csv");
+
+    // Open poses CSV file
+    poses_file_stream_.open(poses_file_path_);
+    if (!poses_file_stream_.is_open())
+    {
+      RCLCPP_ERROR(this->get_logger(), "Failed to open CSV file: %s", poses_file_path_.c_str());
+    }
+    poses_file_stream_ << "t,x,y,z,qx,qy,qz,qw\n";
+
+    // Open lines CSV file
+    lines_file_stream_.open(lines_file_path_);
+    if (!lines_file_stream_.is_open())
+    {
+      RCLCPP_ERROR(this->get_logger(), "Failed to open CSV file: %s", lines_file_path_.c_str());
+    }
+    lines_file_stream_ << "t1,startX1,startY1,endX1,endY1,t2,startX2,startY2,endX2,endY2\n";
+
+    // Define timer
+    watchdog_timer_ = this->create_wall_timer(
+        std::chrono::seconds(3),
+        std::bind(&LineExtractor::find_matches, this));
+    // Instantly stop the timer
+    watchdog_timer_->cancel();
   }
 
 private:
-  // Initialize subscriber
-  rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr sub_;
+  // Initialize subscriber for lines
+  rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr sub_lines_;
+
+  // Initialize subscriber for poses
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_poses_;
 
   // Initialize Linear Binary Descriptor (LBD)
   cv::Ptr<cv::line_descriptor::BinaryDescriptor> lbd_;
 
-  // Initialize rosbag writer
-  // std::unique_ptr<rosbag2_cpp::Writer> writer_;
+  // Initialize Linear Binary Descriptor Matcher (LBDM)
+  cv::Ptr<cv::line_descriptor::BinaryDescriptorMatcher> lbdm_;
 
-  // Initialize publisher
-  rclcpp::Publisher<floorplan_alignment_interfaces::msg::LinesInFrame>::SharedPtr pub_;
+  // Vector to store all keylines
+  std::map<double, std::vector<cv::line_descriptor::KeyLine>> all_keylines_;
 
-  // Define callback
+  // Vector to store all descriptors
+  std::map<double, cv::Mat> all_descriptors_;
+
+  // Time spacing
+  double delta_t_ = 1.5; // [s]
+
+  // Path to CSV files
+  std::filesystem::path poses_file_path_;
+  std::filesystem::path lines_file_path_;
+
+  // Max acceptable match distance
+  float match_distance_ = 30.0f;
+
+  // File streams
+  std::ofstream poses_file_stream_;
+  std::ofstream lines_file_stream_;
+
+  // Initialize timer variables
+  rclcpp::TimerBase::SharedPtr watchdog_timer_;
+  bool timer_expired_ = false;
+
+  // Define callback for lines
   void imageCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg)
   {
+    // Reset watchdog timer
+    watchdog_timer_->reset();
+
     // Check that we are receiving an image
     cv::Mat img = cv::imdecode(cv::Mat(msg->data), cv::IMREAD_GRAYSCALE);
     if (img.empty())
@@ -90,55 +147,113 @@ private:
     cv::Mat descriptors;
     lbd_->compute(img, keylines, descriptors);
 
-    // Save lines and descriptors to msg
-    floorplan_alignment_interfaces::msg::LinesInFrame lines_in_frame_msg;
-    lines_in_frame_msg.header.stamp = msg->header.stamp;
-    for (size_t i = 1; i < keylines.size(); i++)
-    {
-      // Start and end points
-      floorplan_alignment_interfaces::msg::LineWithDescriptor lwd;
-      lwd.start.x = keylines[i].startPointX;
-      lwd.start.y = keylines[i].startPointY;
-      lwd.start.z = 0.0;
-      lwd.end.x = keylines[i].endPointX;
-      lwd.end.y = keylines[i].endPointY;
-      lwd.end.z = 0.0;
-
-      // Descriptor
-      cv::Mat desc_row = descriptors.row((int)i);
-      lwd.descriptor.assign(desc_row.datastart, desc_row.dataend);
-
-      // Add to lines in frame msg
-      lines_in_frame_msg.lines.push_back(lwd);
-    }
-
-    // Publish lines with descriptors
-    pub_->publish(lines_in_frame_msg);
-
-    // Write msg to rosbag
-    // auto bag_msg = std::make_shared<rosbag2_storage::SerializedBagMessage>();
-    // bag_msg->time_stamp = msg->header.stamp.sec * 1'000'000'000ULL + msg->header.stamp.nanosec;
-    // bag_msg->topic_name = "/lines_with_descriptors";
-    // rclcpp::Serialization<floorplan_alignment_interfaces::msg::LinesInFrame> serializer;
-    // rclcpp::SerializedMessage serialized_msg;
-    // serializer.serialize_message(&lines_in_frame_msg, &serialized_msg);
-    // bag_msg->serialized_data = std::vector<uint8_t>(
-    //     serialized_msg.get_rcl_serialized_message().buffer,
-    //     serialized_msg.get_rcl_serialized_message().buffer +
-    //         serialized_msg.get_rcl_serialized_message().buffer_length);
-    // writer_->write(bag_msg);
+    // Store keylines and descriptors
+    double t = static_cast<double>(msg->header.stamp.sec) + static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
+    all_keylines_[t] = keylines;
+    all_descriptors_[t] = descriptors;
 
     // Display image with detected lines
     cv::imshow("Camera Frame", img);
     cv::waitKey(1);
   }
+
+  // Define callback for poses
+  void poseCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
+  {
+    double t = static_cast<double>(msg->header.stamp.sec) + static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
+    double x = msg->pose.pose.position.x;
+    double y = msg->pose.pose.position.y;
+    double z = msg->pose.pose.position.z;
+    double qx = msg->pose.pose.orientation.x;
+    double qy = msg->pose.pose.orientation.y;
+    double qz = msg->pose.pose.orientation.z;
+    double qw = msg->pose.pose.orientation.z;
+
+    // Add to CSV file
+    poses_file_stream_ << t << "," << x << "," << y << "," << z << ","
+                       << qx << "," << qy << "," << qz << "," << qw << "\n";
+  }
+
+  // Perform line matching
+  void find_matches()
+  {
+    if (timer_expired_) return;
+
+    timer_expired_ = true;
+    RCLCPP_INFO(this->get_logger(), "No more messages, performing line matching...");
+    
+    for (auto it = all_descriptors_.begin(); it != all_descriptors_.end(); ++it)
+    {
+      // First timestamp and descriptor
+      double t1 = it->first;
+      const cv::Mat &desc1 = it->second;
+      const auto &keylines1 = all_keylines_[t1];
+
+      auto it2 = all_descriptors_.lower_bound(t1 + delta_t_);
+      if (it2 == all_descriptors_.end())
+        continue;
+
+      // Second timestamp and descriptor
+      double t2 = it2->first;
+      const cv::Mat &desc2 = it2->second;
+      const auto &keylines2 = all_keylines_[t2];
+
+      // Find matches
+      std::vector<cv::DMatch> matches;
+      lbdm_->match(desc1, desc2, matches);
+
+      // Keep acceptable matches
+      std::vector<cv::DMatch> acceptable_matches;
+      for (int i = 0; i < (int)matches.size(); i++)
+      {
+        if (matches[i].distance < match_distance_)
+          acceptable_matches.push_back(matches[i]);
+      }
+
+      // Extract lines corresponding to acceptable matches
+      for (const auto &m : acceptable_matches)
+      {
+        const auto &kl1 = keylines1[m.queryIdx];
+        const auto &kl2 = keylines2[m.trainIdx];
+
+        // Get start and end points
+        float startX1 = kl1.startPointX;
+        float startY1 = kl1.startPointY;
+        float endX1 = kl1.endPointX;
+        float endY1 = kl1.endPointY;
+        float startX2 = kl2.startPointX;
+        float startY2 = kl2.startPointY;
+        float endX2 = kl2.endPointX;
+        float endY2 = kl2.endPointY;
+
+        // Add to CSV file
+        lines_file_stream_ << t1 << "," << startX1 << "," << startY1 << "," << endX1 << "," << endY1 << ","
+                           << t2 << "," << startX2 << "," << startY2 << "," << endX2 << "," << endY2 << "\n";
+      }
+    }
+
+    RCLCPP_INFO(this->get_logger(), "Line matching complete!");
+  }
 };
 
 int main(int argc, char *argv[])
 {
+  // Initialize
   rclcpp::init(argc, argv);
-  auto node = std::make_shared<LineExtractor>();
-  rclcpp::spin(node);
+
+  // Default file names for poses and lines csv files
+  std::string poses_file_name = "poses";
+  std::string lines_file_name = "lines";
+
+  // Assign user-specified filenames
+  if (argc > 2)
+  {
+    poses_file_name = argv[1];
+    lines_file_name = argv[2];
+  }
+
+  // Spin the node and pass filenames as arguments
+  rclcpp::spin(std::make_shared<LineExtractor>(poses_file_name, lines_file_name));
   rclcpp::shutdown();
   return 0;
 }
