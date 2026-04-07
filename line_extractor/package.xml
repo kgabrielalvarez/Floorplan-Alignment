@@ -11,6 +11,7 @@
   <buildtool_depend>rclcpp</buildtool_depend>
   <buildtool_depend>sensor_msgs</buildtool_depend>
   <buildtool_depend>nav_msgs</buildtool_depend>
+  <buildtool_depend>geometry_msgs</buildtool_depend>
   <buildtool_depend>cv_bridge</buildtool_depend>
   <buildtool_depend>opencv</buildtool_depend>
   <depend>floorplan_alignment_interfaces</depend>

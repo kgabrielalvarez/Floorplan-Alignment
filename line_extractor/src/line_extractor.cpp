@@ -15,6 +15,8 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "nav_msgs/msg/odometry.hpp"
+#include "nav_msgs/msg/path.hpp"
+#include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "opencv2/opencv.hpp"
 #include "opencv2/imgproc.hpp"
 #include "opencv2/core.hpp"
@@ -25,6 +27,7 @@
 #include "floorplan_alignment_interfaces/msg/line_with_descriptor.hpp"
 #include <fstream>
 #include <filesystem>
+#include <iomanip>
 
 class LineExtractor : public rclcpp::Node
 {
@@ -39,7 +42,7 @@ public:
         std::bind(&LineExtractor::imageCallback, this, std::placeholders::_1));
 
     // Define pose subscriber
-    sub_poses_ = this->create_subscription<nav_msgs::msg::Odometry>(
+    sub_poses_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
         "/ov_msckf/poseimu", 10,
         std::bind(&LineExtractor::poseCallback, this, std::placeholders::_1));
 
@@ -60,6 +63,7 @@ public:
       RCLCPP_ERROR(this->get_logger(), "Failed to open CSV file: %s", poses_file_path_.c_str());
     }
     poses_file_stream_ << "t,x,y,z,qx,qy,qz,qw\n";
+    poses_file_stream_ << std::fixed << std::setprecision(5);
 
     // Open lines CSV file
     lines_file_stream_.open(lines_file_path_);
@@ -68,6 +72,7 @@ public:
       RCLCPP_ERROR(this->get_logger(), "Failed to open CSV file: %s", lines_file_path_.c_str());
     }
     lines_file_stream_ << "t1,startX1,startY1,endX1,endY1,t2,startX2,startY2,endX2,endY2\n";
+    lines_file_stream_ << std::fixed << std::setprecision(5);
 
     // Define timer
     watchdog_timer_ = this->create_wall_timer(
@@ -82,7 +87,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr sub_lines_;
 
   // Initialize subscriber for poses
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_poses_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr sub_poses_;
 
   // Initialize Linear Binary Descriptor (LBD)
   cv::Ptr<cv::line_descriptor::BinaryDescriptor> lbd_;
@@ -153,12 +158,12 @@ private:
     all_descriptors_[t] = descriptors;
 
     // Display image with detected lines
-    cv::imshow("Camera Frame", img);
-    cv::waitKey(1);
+    // cv::imshow("Camera Frame", img);
+    // cv::waitKey(1);
   }
 
   // Define callback for poses
-  void poseCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
+  void poseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
   {
     double t = static_cast<double>(msg->header.stamp.sec) + static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
     double x = msg->pose.pose.position.x;
@@ -167,7 +172,7 @@ private:
     double qx = msg->pose.pose.orientation.x;
     double qy = msg->pose.pose.orientation.y;
     double qz = msg->pose.pose.orientation.z;
-    double qw = msg->pose.pose.orientation.z;
+    double qw = msg->pose.pose.orientation.w;
 
     // Add to CSV file
     poses_file_stream_ << t << "," << x << "," << y << "," << z << ","
