@@ -77,7 +77,7 @@ public:
     // Define timer
     watchdog_timer_ = this->create_wall_timer(
         std::chrono::seconds(3),
-        std::bind(&LineExtractor::find_matches, this));
+        std::bind(&LineExtractor::findMatches, this));
     // Instantly stop the timer
     watchdog_timer_->cancel();
   }
@@ -101,6 +101,9 @@ private:
   // Vector to store all descriptors
   std::map<double, cv::Mat> all_descriptors_;
 
+  // Vector to store all frames
+  std::map<double, cv::Mat> all_images_;
+
   // Time spacing
   double delta_t_ = 1.5; // [s]
 
@@ -109,7 +112,7 @@ private:
   std::filesystem::path lines_file_path_;
 
   // Max acceptable match distance
-  float match_distance_ = 30.0f;
+  float min_match_score_ = 10.0f;
 
   // File streams
   std::ofstream poses_file_stream_;
@@ -127,11 +130,33 @@ private:
                                  cv::Point(625, 450)};
   std::vector<std::vector<cv::Point>> vector_of_rois_ = {roi_};
 
+  // Image bounding box
+  cv::Rect img_bbox_ = cv::Rect(300, 0, 1075, 750);
+
   // Acceptable angle from horizontal
   const float acceptable_angle_ = 30.0f * CV_PI / 180.0f; // [rad]
 
   // Accpetable length
   const float acceptable_length_ = 75.0f; // [pixels]
+
+  // Time window over which to search for matches
+  const float search_window_ = 3.0f; // [s]
+
+  // Struct to store matches
+  struct Match_type
+  {
+    double t1;
+    double t2;
+    double delta_t;
+    double startX1;
+    double startY1;
+    double endX1;
+    double endY1;
+    double startX2;
+    double startY2;
+    double endX2;
+    double endY2;
+  };
 
   // Define callback for lines
   void imageCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg)
@@ -141,6 +166,8 @@ private:
 
     // Check that we are receiving an image
     cv::Mat img = cv::imdecode(cv::Mat(msg->data), cv::IMREAD_GRAYSCALE);
+    cv::Mat img_color;
+    cv::cvtColor(img, img_color, cv::COLOR_GRAY2BGR);
     if (img.empty())
     {
       RCLCPP_WARN(this->get_logger(), "Empty image frame");
@@ -154,6 +181,17 @@ private:
     // Detect lines
     std::vector<cv::line_descriptor::KeyLine> keylines;
     lbd_->detect(img, keylines, mask);
+
+    // Draw mask
+    cv::polylines(img, vector_of_rois_, true, cv::Scalar(255), 2);
+
+    // Check if we detected any keylines
+    if (keylines.empty())
+    {
+      cv::imshow("Camera Frame", img);
+      cv::waitKey(1);
+      return;
+    }
 
     // Keep only keylines that are close to horizontal
     std::vector<cv::line_descriptor::KeyLine> filtered_keylines;
@@ -178,8 +216,13 @@ private:
       filtered_keylines.push_back(kl);
     }
 
-    // Draw rectangle
-    cv::polylines(img, vector_of_rois_, true, cv::Scalar(255), 2);
+    // Check if any keylines passed the checks
+    if (filtered_keylines.empty())
+    {
+      cv::imshow("Camera Frame", img);
+      cv::waitKey(1);
+      return;
+    }
 
     // Visualize lines
     for (const auto &kl : filtered_keylines)
@@ -196,10 +239,14 @@ private:
     cv::Mat descriptors;
     lbd_->compute(img, filtered_keylines, descriptors);
 
-    // Store keylines and descriptors
-    double t = static_cast<double>(msg->header.stamp.sec) + static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
-    all_keylines_[t] = filtered_keylines;
-    all_descriptors_[t] = descriptors;
+    // Store keylines and descriptors if any were found
+    if (!filtered_keylines.empty())
+    {
+      double t = static_cast<double>(msg->header.stamp.sec) + static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
+      all_keylines_[t] = filtered_keylines;
+      all_descriptors_[t] = descriptors;
+      all_images_[t] = img_color(img_bbox_).clone();
+    }
 
     // Display image with detected lines
     cv::imshow("Camera Frame", img);
@@ -224,7 +271,7 @@ private:
   }
 
   // Perform line matching
-  void find_matches()
+  void findMatches()
   {
     if (timer_expired_)
       return;
@@ -232,54 +279,103 @@ private:
     timer_expired_ = true;
     RCLCPP_INFO(this->get_logger(), "No more messages, performing line matching...");
 
-    for (auto it = all_descriptors_.begin(); it != all_descriptors_.end(); ++it)
+    // Close previous frame
+    cv::destroyWindow("Camera Frame");
+
+    // Define vector to store matches
+    std::vector<Match_type> accepted_matches_;
+
+    for (auto frame1 = all_descriptors_.begin(); frame1 != all_descriptors_.end(); ++frame1)
     {
-      // First timestamp and descriptor
-      double t1 = it->first;
-      const cv::Mat &desc1 = it->second;
+      // Timestamp, descriptors, and keylines for first frame
+      double t1 = frame1->first;
+      const cv::Mat &desc1 = frame1->second;
       const auto &keylines1 = all_keylines_[t1];
 
-      auto it2 = all_descriptors_.lower_bound(t1 + delta_t_);
-      if (it2 == all_descriptors_.end())
+      // frame2 end
+      auto frame2_end = all_descriptors_.lower_bound(t1 + search_window_);
+
+      // Cycle through all future frames
+      for (auto frame2 = std::next(frame1); frame2 != frame2_end; ++frame2)
+      {
+        // Timestamp, descriptors, and keylines for second frame
+        double t2 = frame2->first;
+        const cv::Mat &desc2 = frame2->second;
+        const auto &keylines2 = all_keylines_[t2];
+
+        // Find matches
+        std::vector<cv::DMatch> matches;
+        lbdm_->match(desc1, desc2, matches);
+
+        // Keep acceptable matches
+        for (const auto &match : matches)
+        {
+          if (match.distance < min_match_score_)
+          {
+            const auto &kl1 = keylines1[match.queryIdx];
+            const auto &kl2 = keylines2[match.trainIdx];
+
+            // Save accpeted match
+            Match_type accepted_match;
+            accepted_match.t1 = t1;                   // [s]
+            accepted_match.t2 = t2;                   // [s]
+            accepted_match.delta_t = t2 - t1;         // [s]
+            accepted_match.startX1 = kl1.startPointX; // [px]
+            accepted_match.startY1 = kl1.startPointY; // [px]
+            accepted_match.endX1 = kl1.endPointX;     // [px]
+            accepted_match.endY1 = kl1.endPointY;     // [px]
+            accepted_match.startX2 = kl2.startPointX; // [px]
+            accepted_match.startY2 = kl2.startPointY; // [px]
+            accepted_match.endX2 = kl2.endPointX;     // [px]
+            accepted_match.endY2 = kl2.endPointY;     // [px]
+            accepted_matches_.push_back(accepted_match);
+          }
+        }
+      }
+    }
+
+    // Sort matches from largest to smallest delta_t (better for triangulation)
+    std::sort(accepted_matches_.begin(), accepted_matches_.end(),
+              [](const Match_type &a, const Match_type &b)
+              {
+                return a.delta_t > b.delta_t; // descending order
+              });
+
+    RCLCPP_INFO(this->get_logger(), "%zu matches found!", accepted_matches_.size());
+
+    // Display top matches
+    for (int i = 0; i < std::min(20, (int)accepted_matches_.size()); i++)
+    {
+      const auto &m = accepted_matches_[i];
+
+      if (all_images_.count(m.t1) == 0 || all_images_.count(m.t2) == 0)
         continue;
 
-      // Second timestamp and descriptor
-      double t2 = it2->first;
-      const cv::Mat &desc2 = it2->second;
-      const auto &keylines2 = all_keylines_[t2];
+      cv::Mat img1 = all_images_[m.t1].clone();
+      cv::Mat img2 = all_images_[m.t2].clone();
 
-      // Find matches
-      std::vector<cv::DMatch> matches;
-      lbdm_->match(desc1, desc2, matches);
+      // Shift coordinates into cropped frame
+      cv::Point2f p1_start(m.startX1 - img_bbox_.x, m.startY1 - img_bbox_.y);
+      cv::Point2f p1_end(m.endX1 - img_bbox_.x, m.endY1 - img_bbox_.y);
 
-      // Keep acceptable matches
-      std::vector<cv::DMatch> acceptable_matches;
-      for (int i = 0; i < (int)matches.size(); i++)
-      {
-        if (matches[i].distance < match_distance_)
-          acceptable_matches.push_back(matches[i]);
-      }
+      cv::Point2f p2_start(m.startX2 - img_bbox_.x, m.startY2 - img_bbox_.y);
+      cv::Point2f p2_end(m.endX2 - img_bbox_.x, m.endY2 - img_bbox_.y);
 
-      // Extract lines corresponding to acceptable matches
-      for (const auto &m : acceptable_matches)
-      {
-        const auto &kl1 = keylines1[m.queryIdx];
-        const auto &kl2 = keylines2[m.trainIdx];
+      // Draw lines
+      cv::line(img1, p1_start, p1_end, cv::Scalar(255, 0, 0), 2);
+      cv::line(img2, p2_start, p2_end, cv::Scalar(255, 0, 0), 2);
 
-        // Get start and end points
-        float startX1 = kl1.startPointX;
-        float startY1 = kl1.startPointY;
-        float endX1 = kl1.endPointX;
-        float endY1 = kl1.endPointY;
-        float startX2 = kl2.startPointX;
-        float startY2 = kl2.startPointY;
-        float endX2 = kl2.endPointX;
-        float endY2 = kl2.endPointY;
+      // Combine
+      cv::Mat combined;
+      cv::hconcat(img1, img2, combined);
 
-        // Add to CSV file
-        lines_file_stream_ << t1 << "," << startX1 << "," << startY1 << "," << endX1 << "," << endY1 << ","
-                           << t2 << "," << startX2 << "," << startY2 << "," << endX2 << "," << endY2 << "\n";
-      }
+      // Display compared frames
+      cv::imshow("Top Matches", combined);
+      cv::waitKey(2500);
+
+      // Save to CSV file
+      lines_file_stream_ << m.t1 << "," << m.startX1 << "," << m.startY1 << "," << m.endX1 << "," << m.endY1 << ","
+                         << m.t2 << "," << m.startX2 << "," << m.startY2 << "," << m.endX2 << "," << m.endY2 << "\n";
     }
 
     RCLCPP_INFO(this->get_logger(), "Line matching complete!");
