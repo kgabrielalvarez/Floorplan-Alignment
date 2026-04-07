@@ -119,6 +119,20 @@ private:
   rclcpp::TimerBase::SharedPtr watchdog_timer_;
   bool timer_expired_ = false;
 
+  // Region of Interest on Frame
+  std::vector<cv::Point> roi_ = {cv::Point(625, 200),
+                                 cv::Point(1200, 200),
+                                 cv::Point(1400, 400),
+                                 cv::Point(1400, 450),
+                                 cv::Point(625, 450)};
+  std::vector<std::vector<cv::Point>> vector_of_rois_ = {roi_};
+
+  // Acceptable angle from horizontal
+  const float acceptable_angle_ = 30.0f * CV_PI / 180.0f; // [rad]
+
+  // Accpetable length
+  const float acceptable_length_ = 75.0f; // [pixels]
+
   // Define callback for lines
   void imageCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg)
   {
@@ -133,12 +147,42 @@ private:
       return;
     }
 
+    // Define mask
+    cv::Mat mask = cv::Mat::zeros(img.size(), CV_8UC1);
+    cv::fillPoly(mask, vector_of_rois_, cv::Scalar(255));
+
     // Detect lines
     std::vector<cv::line_descriptor::KeyLine> keylines;
-    lbd_->detect(img, keylines);
+    lbd_->detect(img, keylines, mask);
+
+    // Keep only keylines that are close to horizontal
+    std::vector<cv::line_descriptor::KeyLine> filtered_keylines;
+    for (const auto &kl : keylines)
+    {
+      float angle = kl.angle;       // [rad]
+      float length = kl.lineLength; // [pixels]
+
+      // Clamp angle to [0, 2pi)
+      if (angle < 0)
+        angle += 2.0f * CV_PI;
+
+      // Check that angle is in range
+      if ((angle > acceptable_angle_ && angle < CV_PI - acceptable_angle_) || (angle > CV_PI + acceptable_angle_ && angle < 2.0f * CV_PI - acceptable_angle_))
+        continue;
+
+      // Check that length is in range
+      if (length < acceptable_length_)
+        continue;
+
+      // Keep keyline
+      filtered_keylines.push_back(kl);
+    }
+
+    // Draw rectangle
+    cv::polylines(img, vector_of_rois_, true, cv::Scalar(255), 2);
 
     // Visualize lines
-    for (const auto &kl : keylines)
+    for (const auto &kl : filtered_keylines)
     {
       // Get ends of line
       cv::Point2f pt1 = cv::Point2f(kl.startPointX, kl.startPointY);
@@ -150,16 +194,16 @@ private:
 
     // Define descriptors
     cv::Mat descriptors;
-    lbd_->compute(img, keylines, descriptors);
+    lbd_->compute(img, filtered_keylines, descriptors);
 
     // Store keylines and descriptors
     double t = static_cast<double>(msg->header.stamp.sec) + static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
-    all_keylines_[t] = keylines;
+    all_keylines_[t] = filtered_keylines;
     all_descriptors_[t] = descriptors;
 
     // Display image with detected lines
-    // cv::imshow("Camera Frame", img);
-    // cv::waitKey(1);
+    cv::imshow("Camera Frame", img);
+    cv::waitKey(1);
   }
 
   // Define callback for poses
@@ -182,11 +226,12 @@ private:
   // Perform line matching
   void find_matches()
   {
-    if (timer_expired_) return;
+    if (timer_expired_)
+      return;
 
     timer_expired_ = true;
     RCLCPP_INFO(this->get_logger(), "No more messages, performing line matching...");
-    
+
     for (auto it = all_descriptors_.begin(); it != all_descriptors_.end(); ++it)
     {
       // First timestamp and descriptor
