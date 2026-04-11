@@ -11,10 +11,17 @@ find_package(rclcpp REQUIRED)
 find_package(nav_msgs REQUIRED)
 
 add_executable(trajectory_recorder src/trajectory_recorder.cpp)
+
 ament_target_dependencies(trajectory_recorder rclcpp nav_msgs)
 
 install(TARGETS
   trajectory_recorder
   DESTINATION lib/${PROJECT_NAME})
+
+
+install(PROGRAMS
+  src/save_tf.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 ament_package()

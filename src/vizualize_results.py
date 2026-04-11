@@ -21,6 +21,7 @@ floorplan_path = "../floorplans/masks_no_windows/floor_1.png"
 
 # Trajectory file path
 trajectory_path = "../trajectory_recorder/trajectories/test_trajectory_V6.csv" # <-- generated from floor_1_2025-05-05_run_1
+#trajectory_path = "../trajectory_recorder/trajectories/trajectory_marius.csv"
 
 # Load the PNG image
 img = mpimg.imread(floorplan_path)

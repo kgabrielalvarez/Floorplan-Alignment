@@ -9,15 +9,18 @@ if ! command -v tmux &> /dev/null; then
     exit 1
 fi
 
+echo "Starting save_tf.py in background..."
+nohup bash -lc "$SETUP_CMD && ros2 run trajectory_recorder save_tf.py" > /tmp/save_tf.log 2>&1 &
+
 echo "Starting tmux session: $SESSION_NAME"
 
 # 1. Start a new detached tmux session
 tmux new-session -d -s $SESSION_NAME
 
 # 2. Split the window into a 2x2 grid
-tmux split-window -h -t $SESSION_NAME:0.0 
-tmux split-window -v -t $SESSION_NAME:0.0 
-tmux split-window -v -t $SESSION_NAME:0.2 
+tmux split-window -h -t $SESSION_NAME:0.0
+tmux split-window -v -t $SESSION_NAME:0.0
+tmux split-window -v -t $SESSION_NAME:0.2
 
 # 3. Send commands to each pane with built-in sleep delays
 
@@ -30,7 +33,7 @@ tmux send-keys -t $SESSION_NAME:0.1 "echo 'Waiting 5 seconds...' && sleep 5 && e
 # Pane 2 (Waits 10 seconds)
 tmux send-keys -t $SESSION_NAME:0.2 "echo 'Waiting 10 seconds...' && sleep 10 && echo 'Starting Groundtruth Server...' && $SETUP_CMD && ros2 launch challenge_tools_ros groundtruth_server.launch.py run_name:=floor_1_2025-05-05_run_1" C-m
 
-# pane 4 (Waits 20 seconds)
+# Pane 3 (Waits 20 seconds)
 tmux send-keys -t $SESSION_NAME:0.3 "echo 'Waiting 20 seconds...' && sleep 20 && echo 'Playing ROSbag...' && $SETUP_CMD && ros2 bag play src/hilti-trimble-slam-challenge-2026/challenge_tools_ros/download_data/challenge_data/data/floor_1/2025-05-05/run_1/rosbag -p -r 0.5" C-m
 
 # 4. Attach to the session IMMEDIATELY
