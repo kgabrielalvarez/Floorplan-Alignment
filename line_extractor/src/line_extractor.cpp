@@ -23,8 +23,6 @@
 #include "opencv2/objdetect.hpp"
 #include "opencv2/line_descriptor.hpp"
 #include "vector"
-#include "floorplan_alignment_interfaces/msg/lines_in_frame.hpp"
-#include "floorplan_alignment_interfaces/msg/line_with_descriptor.hpp"
 #include <fstream>
 #include <filesystem>
 #include <iomanip>

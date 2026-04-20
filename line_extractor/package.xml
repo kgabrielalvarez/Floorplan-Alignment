@@ -14,7 +14,6 @@
   <buildtool_depend>geometry_msgs</buildtool_depend>
   <buildtool_depend>cv_bridge</buildtool_depend>
   <buildtool_depend>opencv</buildtool_depend>
-  <depend>floorplan_alignment_interfaces</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
