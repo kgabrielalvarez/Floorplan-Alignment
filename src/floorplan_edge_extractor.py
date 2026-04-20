@@ -2,6 +2,7 @@
 import ezdxf
 import math
 import matplotlib.pyplot as plt
+import csv
 
 # Minimum length that segment must have to be kept
 min_length = 40
@@ -23,6 +24,16 @@ for entity in msp:
             # Check length
             if math.hypot(p2[0] - p1[0], p2[1] - p1[1]) > min_length:
                 segments.append((p1, p2))
+
+# Save segments to CSV
+with open("../floorplans_csv_files/floor_1.csv", mode="w", newline="") as file:
+    writer = csv.writer(file)
+    # Header
+    writer.writerow(["x1", "y1", "x2", "y2"])
+    # Data
+    for seg in segments:
+        p1, p2 = seg
+        writer.writerow([p1[0], p1[1], p2[0], p2[1]])
             
 # Visualize segments
 for seg in segments:
