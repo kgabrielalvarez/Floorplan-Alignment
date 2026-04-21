@@ -3,6 +3,7 @@ import ezdxf
 import math
 import matplotlib.pyplot as plt
 import csv
+import numpy as np
 
 # Minimum length that segment must have to be kept
 min_length = 40
@@ -14,6 +15,15 @@ msp = raw_floorplan.modelspace()
 # Scaling factor
 scale = 100
 
+# The PNG and the DXF files have different origins so we need to align
+# them relative to each other, the alignment doesn't need to be perfect 
+# since the edges will be used for the final alignment, but it needs to
+# get us close enough.  We figure out the translation by looking at a
+# distinctive feature like a column corner.
+column_corner = np.array([-1037.5, 1832.75])
+column_corner_png = np.array([4051.5, 2158.5])
+offset = column_corner_png - column_corner
+
 # Save the lines in the dxf to the segmentes variable
 segments = []
 for entity in msp:
@@ -24,8 +34,8 @@ for entity in msp:
         for idx in range(len(points) - 1):
             x1, y1 = points[idx][:2]
             x2, y2 = points[idx + 1][:2]
-            p1 = (x1 * scale, y1 * scale)
-            p2 = (x2 * scale, y2 * scale)
+            p1 = (x1 * scale + offset[0], y1 * scale + offset[1])
+            p2 = (x2 * scale + offset[0], y2 * scale + offset[1])
             
             # Check length
             if math.hypot(p2[0] - p1[0], p2[1] - p1[1]) > min_length:
@@ -46,6 +56,9 @@ for seg in segments:
     x = [seg[0][0], seg[1][0]]
     y = [seg[0][1], seg[1][1]]
     plt.plot(x, y)
+    
+# Visualize column corner
+column_corner_pt = plt.scatter(column_corner[0], column_corner[1], marker="x", s=60, label="Column Corner")
     
 plt.gca().set_aspect('equal', adjustable='box')
 plt.show()

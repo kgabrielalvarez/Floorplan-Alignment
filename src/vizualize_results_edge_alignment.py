@@ -40,13 +40,19 @@ z = trajectory["z"].to_numpy()
 with open('../trajectory_recorder/trajectories/orientations/orientation.json', 'r') as file:
     f = json.load(file)
     theta0 = f["yaw_deg"]
-    print(f"YAW: {theta0}°")
     start_position = np.array(f["translation_xyz"])
 
 # Floorplan edges data
 floorplan_edges_path = "../floorplans_csv_files/floor_1.csv"
 floorplan_edges_csv = pd.read_csv(floorplan_edges_path)
 floorplan_edges = floorplan_edges_csv[["x1","y1","x2","y2"]].to_numpy()
+
+# The PNG and the DXF files have different origins so we need to align
+# them relative to each other, the alignment doesn't need to be perfect 
+# since the edges will be used for the final alignment, but it needs to
+# get us close enough.  We figure out the translation by looking at a
+# distinctive feature like a column corner.
+column_corner = np.array([4051.5, 2158.5])
 
 # -----------------------------------------------------------------------------
 # GLOBAL ALIGNMENT USING TF_STATIC
@@ -81,6 +87,7 @@ line_2d_raw, = ax2d.plot(x, y, label='2D-Trajectory')
 
 start_pt = ax2d.scatter(x[0], y[0], marker="o", s=60, label="Start")
 end_pt = ax2d.scatter(x[-1], y[-1], marker="x", s=60, label="End")
+column_corner_pt = ax2d.scatter(column_corner[0], column_corner[1], marker="x", s=60, label="Column Corner")
 
 # axis formatting
 ax2d.set_title("2D Floorplan + Trajectory Overlay")
