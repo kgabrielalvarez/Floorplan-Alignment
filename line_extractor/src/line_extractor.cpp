@@ -282,25 +282,27 @@ private:
         double endY = static_cast<double>(kl.endPointY);
 
         // Save edge
-        if (edge_counter < num_edges_+40 && edge_counter > 40)
-        {
-          // Image
-          cv::Mat img_with_edge = all_images_[timestamp].clone();
+        // if (edge_counter < num_edges_+40 && edge_counter > 40)
+        // {
+        //   // Image
+        //   cv::Mat img_with_edge = all_images_[timestamp].clone();
 
-          // Start and end points
-          cv::Point2f start_point(startX - img_bbox_.x, startY - img_bbox_.y);
-          cv::Point2f end_point(endX - img_bbox_.x, endY - img_bbox_.y);
+        //   // Start and end points
+        //   cv::Point2f start_point(startX - img_bbox_.x, startY - img_bbox_.y);
+        //   cv::Point2f end_point(endX - img_bbox_.x, endY - img_bbox_.y);
 
-          // Edge
-          cv::line(img_with_edge, start_point, end_point, cv::Scalar(255, 0, 0), 2);
+        //   // Edge
+        //   cv::line(img_with_edge, start_point, end_point, cv::Scalar(255, 0, 0), 2);
 
-          // Display frame and edge
-          cv::imshow("Saved Edges", img_with_edge);
-          cv::waitKey(2500);
+        //   // Display frame and edge
+        //   cv::imshow("Saved Edges", img_with_edge);
+        //   cv::waitKey(2500);
 
-          // Save to CSV file
-          lines_file_stream_ << timestamp << "," << startX << "," << startY << "," << endX << "," << endY << "\n";
-        }
+        //   // Save to CSV file
+        //   lines_file_stream_ << timestamp << "," << startX << "," << startY << "," << endX << "," << endY << "\n";
+        // }
+
+        lines_file_stream_ << timestamp << "," << startX << "," << startY << "," << endX << "," << endY << "\n";
 
         edge_counter++;
       }

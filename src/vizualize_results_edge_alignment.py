@@ -119,7 +119,7 @@ def angleRangeCheck(edge, ray1_vector, ray2_vector, plane_point):
 floorplan_path = "../floorplans/masks_no_windows/floor_1.png"
 
 # Trajectory file path
-trajectory_path = "../poses_csv_files/poses_4_21_26.csv"
+trajectory_path = "../poses_csv_files/poses_4_22_26.csv"
 
 # Load floorplan image
 img = mpimg.imread(floorplan_path)
@@ -150,7 +150,7 @@ floorplan_edges = floorplan_edges_csv[["x1","y1","x2","y2"]].to_numpy()
 column_corner = np.array([4051.5, 2158.5])
 
 # Load edges
-edges_path = "../lines_csv_files/lines_4_21_26.csv"
+edges_path = "../lines_csv_files/lines_4_22_26.csv"
 edges_csv = pd.read_csv(edges_path)
 edges = edges_csv[["timestamp", "startX", "startY", "endX", "endY"]].to_numpy()
 
@@ -363,6 +363,12 @@ for edge in edges:
                     best_edge = edge
                     best_alignment_score = alignment_score
                     best_distance_score = distance_score
+                    
+    # Find projection of edge onto plane
+    # q1 = np.array([best_edge[0], best_edge[1], 0])
+    # q2 = np.array([best_edge[2], best_edge[3], 0])
+    # q1_proj = q1 - np.dot(plane_normal, q1 - plane_point) * plane_normal
+    # q2_proj = q2 - np.dot(plane_normal, q2 - plane_point) * plane_normal
         
     # Save rays
     ray_pairs.append((translation_wrld_cam, ray1_wrld, ray2_wrld, best_edge))
