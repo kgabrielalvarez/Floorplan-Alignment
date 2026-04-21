@@ -69,13 +69,13 @@ public:
     {
       RCLCPP_ERROR(this->get_logger(), "Failed to open CSV file: %s", lines_file_path_.c_str());
     }
-    lines_file_stream_ << "t1,startX1,startY1,endX1,endY1,t2,startX2,startY2,endX2,endY2\n";
+    lines_file_stream_ << "timestamp,startX,startY,endX,endY\n";
     lines_file_stream_ << std::fixed << std::setprecision(5);
 
     // Define timer
     watchdog_timer_ = this->create_wall_timer(
         std::chrono::seconds(3),
-        std::bind(&LineExtractor::findMatches, this));
+        std::bind(&LineExtractor::saveEdges, this));
     // Instantly stop the timer
     watchdog_timer_->cancel();
   }
@@ -102,15 +102,9 @@ private:
   // Vector to store all frames
   std::map<double, cv::Mat> all_images_;
 
-  // Time spacing
-  double delta_t_ = 1.5; // [s]
-
   // Path to CSV files
   std::filesystem::path poses_file_path_;
   std::filesystem::path lines_file_path_;
-
-  // Max acceptable match distance
-  float min_match_score_ = 10.0f;
 
   // File streams
   std::ofstream poses_file_stream_;
@@ -137,24 +131,8 @@ private:
   // Accpetable length
   const float acceptable_length_ = 75.0f; // [pixels]
 
-  // Time window over which to search for matches
-  const float search_window_ = 3.0f; // [s]
-
-  // Struct to store matches
-  struct Match_type
-  {
-    double t1;
-    double t2;
-    double delta_t;
-    double startX1;
-    double startY1;
-    double endX1;
-    double endY1;
-    double startX2;
-    double startY2;
-    double endX2;
-    double endY2;
-  };
+  // Number of edges to keep
+  int num_edges_ = 3;
 
   // Define callback for lines
   void imageCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg)
@@ -181,7 +159,7 @@ private:
     lbd_->detect(img, keylines, mask);
 
     // Draw mask
-    cv::polylines(img, vector_of_rois_, true, cv::Scalar(255), 2);
+    cv::polylines(img, vector_of_rois_, true, cv::Scalar(0), 2);
 
     // Check if we detected any keylines
     if (keylines.empty())
@@ -230,7 +208,7 @@ private:
       cv::Point2f pt2 = cv::Point2f(kl.endPointX, kl.endPointY);
 
       // Draw line
-      cv::line(img, pt1, pt2, cv::Scalar(255), 2);
+      cv::line(img, pt1, pt2, cv::Scalar(0), 2);
     }
 
     // Define descriptors
@@ -268,112 +246,59 @@ private:
                        << qx << "," << qy << "," << qz << "," << qw << "\n";
   }
 
-  // Perform line matching
-  void findMatches()
+  // Save edges to CSV file
+  void saveEdges()
   {
     if (timer_expired_)
       return;
 
     timer_expired_ = true;
-    RCLCPP_INFO(this->get_logger(), "No more messages, performing line matching...");
+    RCLCPP_INFO(this->get_logger(), "No more messages, showing extracted edges");
 
     // Close previous frame
     cv::destroyWindow("Camera Frame");
 
-    // Define vector to store matches
-    std::vector<Match_type> accepted_matches_;
+    // Keep track of number of edges we saved
+    int edge_counter = 0;
 
-    for (auto frame1 = all_descriptors_.begin(); frame1 != all_descriptors_.end(); ++frame1)
+    for (auto frame = all_descriptors_.begin(); frame != all_descriptors_.end(); ++frame)
     {
-      // Timestamp, descriptors, and keylines for first frame
-      double t1 = frame1->first;
-      const cv::Mat &desc1 = frame1->second;
-      const auto &keylines1 = all_keylines_[t1];
+      // Timestamp, descriptors, and keylines of the frame
+      double timestamp = frame->first;
+      const cv::Mat &desc = frame->second;
+      const auto &keylines = all_keylines_[timestamp];
 
-      // frame2 end
-      auto frame2_end = all_descriptors_.lower_bound(t1 + search_window_);
-
-      // Cycle through all future frames
-      for (auto frame2 = std::next(frame1); frame2 != frame2_end; ++frame2)
+      // Cycle through all edges detected in frame
+      for (const auto &kl : keylines)
       {
-        // Timestamp, descriptors, and keylines for second frame
-        double t2 = frame2->first;
-        const cv::Mat &desc2 = frame2->second;
-        const auto &keylines2 = all_keylines_[t2];
+        double startX = static_cast<double>(kl.startPointX);
+        double startY = static_cast<double>(kl.startPointY);
+        double endX = static_cast<double>(kl.endPointX);
+        double endY = static_cast<double>(kl.endPointY);
 
-        // Find matches
-        std::vector<cv::DMatch> matches;
-        lbdm_->match(desc1, desc2, matches);
-
-        // Keep acceptable matches
-        for (const auto &match : matches)
+        // Save edge
+        if (edge_counter < num_edges_)
         {
-          if (match.distance < min_match_score_)
-          {
-            const auto &kl1 = keylines1[match.queryIdx];
-            const auto &kl2 = keylines2[match.trainIdx];
+          // Image
+          cv::Mat img_with_edge = all_images_[timestamp].clone();
 
-            // Save accpeted match
-            Match_type accepted_match;
-            accepted_match.t1 = t1;                   // [s]
-            accepted_match.t2 = t2;                   // [s]
-            accepted_match.delta_t = t2 - t1;         // [s]
-            accepted_match.startX1 = kl1.startPointX; // [px]
-            accepted_match.startY1 = kl1.startPointY; // [px]
-            accepted_match.endX1 = kl1.endPointX;     // [px]
-            accepted_match.endY1 = kl1.endPointY;     // [px]
-            accepted_match.startX2 = kl2.startPointX; // [px]
-            accepted_match.startY2 = kl2.startPointY; // [px]
-            accepted_match.endX2 = kl2.endPointX;     // [px]
-            accepted_match.endY2 = kl2.endPointY;     // [px]
-            accepted_matches_.push_back(accepted_match);
-          }
+          // Start and end points
+          cv::Point2f start_point(startX - img_bbox_.x, startY - img_bbox_.y);
+          cv::Point2f end_point(endX - img_bbox_.x, endY - img_bbox_.y);
+
+          // Edge
+          cv::line(img_with_edge, start_point, end_point, cv::Scalar(255, 0, 0), 2);
+
+          // Display frame and edge
+          cv::imshow("Saved Edges", img_with_edge);
+          cv::waitKey(2500);
+
+          // Save to CSV file
+          lines_file_stream_ << timestamp << "," << startX << "," << startY << "," << endX << "," << endY << "\n";
         }
+
+        edge_counter++;
       }
-    }
-
-    // Sort matches from largest to smallest delta_t (better for triangulation)
-    std::sort(accepted_matches_.begin(), accepted_matches_.end(),
-              [](const Match_type &a, const Match_type &b)
-              {
-                return a.delta_t > b.delta_t; // descending order
-              });
-
-    RCLCPP_INFO(this->get_logger(), "%zu matches found!", accepted_matches_.size());
-
-    // Display top matches
-    for (int i = 0; i < std::min(20, (int)accepted_matches_.size()); i++)
-    {
-      const auto &m = accepted_matches_[i];
-
-      if (all_images_.count(m.t1) == 0 || all_images_.count(m.t2) == 0)
-        continue;
-
-      cv::Mat img1 = all_images_[m.t1].clone();
-      cv::Mat img2 = all_images_[m.t2].clone();
-
-      // Shift coordinates into cropped frame
-      cv::Point2f p1_start(m.startX1 - img_bbox_.x, m.startY1 - img_bbox_.y);
-      cv::Point2f p1_end(m.endX1 - img_bbox_.x, m.endY1 - img_bbox_.y);
-
-      cv::Point2f p2_start(m.startX2 - img_bbox_.x, m.startY2 - img_bbox_.y);
-      cv::Point2f p2_end(m.endX2 - img_bbox_.x, m.endY2 - img_bbox_.y);
-
-      // Draw lines
-      cv::line(img1, p1_start, p1_end, cv::Scalar(255, 0, 0), 2);
-      cv::line(img2, p2_start, p2_end, cv::Scalar(255, 0, 0), 2);
-
-      // Combine
-      cv::Mat combined;
-      cv::hconcat(img1, img2, combined);
-
-      // Display compared frames
-      cv::imshow("Top Matches", combined);
-      cv::waitKey(2500);
-
-      // Save to CSV file
-      lines_file_stream_ << m.t1 << "," << m.startX1 << "," << m.startY1 << "," << m.endX1 << "," << m.endY1 << ","
-                         << m.t2 << "," << m.startX2 << "," << m.startY2 << "," << m.endX2 << "," << m.endY2 << "\n";
     }
 
     RCLCPP_INFO(this->get_logger(), "Line matching complete!");
