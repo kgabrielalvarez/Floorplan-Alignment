@@ -11,15 +11,21 @@ min_length = 40
 raw_floorplan = ezdxf.readfile('../floorplans/dxf_files/floor_1.dxf')
 msp = raw_floorplan.modelspace()
 
+# Scaling factor
+scale = 100
+
 # Save the lines in the dxf to the segmentes variable
 segments = []
 for entity in msp:
-    if entity.dxftype() == "POLYLINE":
-        points = list(entity.points())
+    
+    if entity.dxftype() == "LWPOLYLINE":
+        points = entity.get_points()
         
         for idx in range(len(points) - 1):
-            p1 = points[idx]
-            p2 = points[idx + 1]
+            x1, y1 = points[idx][:2]
+            x2, y2 = points[idx + 1][:2]
+            p1 = (x1 * scale, y1 * scale)
+            p2 = (x2 * scale, y2 * scale)
             
             # Check length
             if math.hypot(p2[0] - p1[0], p2[1] - p1[1]) > min_length:
