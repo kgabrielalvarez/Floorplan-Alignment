@@ -74,6 +74,42 @@ def updateRays(val):
     best_edge_viz.set_3d_properties([0, 0])
 
     fig3d.canvas.draw_idle()
+    
+# Check that segment is within angle range
+def angleRangeCheck(edge, ray1_vector, ray2_vector, plane_point):
+    
+    # Angles of rays
+    theta_ray1 = math.atan2(ray1_vector[1], ray1_vector[0])
+    theta_ray2 = math.atan2(ray2_vector[1], ray2_vector[0])
+    
+    # Angles of vertices
+    theta_vertex1 = math.atan2(edge[1] - plane_point[1], edge[0] - plane_point[0])
+    theta_vertex2 = math.atan2(edge[3] - plane_point[1], edge[2] - plane_point[0])
+    
+    # Edge case where we are above and below pi (version 1)
+    if (theta_ray1 > math.pi/2 and theta_ray2 < -math.pi/2):
+        if (theta_vertex1 > theta_ray1 or theta_vertex1 < theta_ray2):
+            return 1
+        if (theta_vertex2 > theta_ray1 or theta_vertex2 < theta_ray2):
+            return 1
+    
+    # Edge case where we are above and below pi (version 2)
+    elif (theta_ray2 > math.pi/2 and theta_ray1 < -math.pi/2):
+        if (theta_vertex1 > theta_ray2 or theta_vertex1 < theta_ray1):
+            return 1
+        if (theta_vertex2 > theta_ray2 or theta_vertex2 < theta_ray1):
+            return 1
+    
+    # Standard cases
+    else:
+        if ((theta_vertex1 >= theta_ray1 and theta_vertex1 < theta_ray2) or
+            (theta_vertex1 < theta_ray1 and theta_vertex1 >= theta_ray2)):
+            return 1
+        if ((theta_vertex2 >= theta_ray1 and theta_vertex2 < theta_ray2) or
+            (theta_vertex2 < theta_ray1 and theta_vertex2 >= theta_ray2)):
+            return 1
+    
+    return 0
 
 # -----------------------------------------------------------------------------
 # LOAD DATA
@@ -302,6 +338,7 @@ for edge in edges:
     # Find the closest floorplan edge
     best_alignment_score = math.inf
     best_distance_score = math.inf
+    best_edge = np.array([0, 0, 0, 0])
     for edge in floorplan_edges:
         
         floorplan_edge_vector = np.array([edge[2] - edge[0], 
@@ -309,20 +346,23 @@ for edge in edges:
                                           0])
         floorplan_edge_vector = floorplan_edge_vector / np.linalg.norm(floorplan_edge_vector)
         
-        # Check alignment
-        alignment_score = abs(np.dot(plane_normal, floorplan_edge_vector))
-        if alignment_score <= best_alignment_score:
-            
-            # Edge is aligned so check distance
-            dist_1 = abs(np.dot(plane_normal, np.array([edge[0], edge[1], 0]) - plane_point))
-            dist_2 = abs(np.dot(plane_normal, np.array([edge[2], edge[3], 0]) - plane_point))
-            distance_score = dist_1 + dist_2
-            if distance_score < best_distance_score:
+        # Check that segment is within angle range
+        if angleRangeCheck(edge, ray1_vector, ray2_vector, translation_wrld_cam):
+        
+            # Check alignment
+            alignment_score = abs(np.dot(plane_normal, floorplan_edge_vector))
+            if alignment_score <= best_alignment_score:
                 
-                # Update best choice of segment
-                best_edge = edge
-                best_alignment_score = alignment_score
-                best_distance_score = distance_score
+                # Edge is aligned so check distance
+                dist_1 = abs(np.dot(plane_normal, np.array([edge[0], edge[1], 0]) - plane_point))
+                dist_2 = abs(np.dot(plane_normal, np.array([edge[2], edge[3], 0]) - plane_point))
+                distance_score = dist_1 + dist_2
+                if distance_score < best_distance_score:
+                    
+                    # Update best choice of segment
+                    best_edge = edge
+                    best_alignment_score = alignment_score
+                    best_distance_score = distance_score
         
     # Save rays
     ray_pairs.append((translation_wrld_cam, ray1_wrld, ray2_wrld, best_edge))
