@@ -58,6 +58,22 @@ def setAxisEqual(ax):
     ax.set_xlim3d([x_middle - plot_radius, x_middle + plot_radius])
     ax.set_ylim3d([y_middle - plot_radius, y_middle + plot_radius])
     ax.set_zlim3d([z_middle - plot_radius, z_middle + plot_radius])
+    
+# Update ray plot
+def updateRays(val):
+    idx = int(slider.val)
+    t, r1, r2, be = ray_pairs[idx]
+
+    ray1_viz.set_data([t[0], r1[0]], [t[1], r1[1]])
+    ray1_viz.set_3d_properties([t[2], r1[2]])
+
+    ray2_viz.set_data([t[0], r2[0]], [t[1], r2[1]])
+    ray2_viz.set_3d_properties([t[2], r2[2]])
+    
+    best_edge_viz.set_data([be[0], be[2]], [be[1], be[3]])
+    best_edge_viz.set_3d_properties([0, 0])
+
+    fig3d.canvas.draw_idle()
 
 # -----------------------------------------------------------------------------
 # LOAD DATA
@@ -218,7 +234,7 @@ R_rotwrld_wrld = np.array([[np.cos(theta0), -np.sin(theta0), 0],
 triad_scale = 50.0
 
 # Visualize rotated poses
-for idx in range(0, len(pose_translations), 25):
+for idx in range(0, len(pose_translations), 15):
     
     pose = pose_translations[idx, :]
     quat = pose_quats[idx, :]
@@ -243,6 +259,8 @@ setAxisEqual(ax3d)
 # -----------------------------------------------------------------------------
 # CALCULATE PLANES IN WHICH EDGES ARE CONTAINED
 # -----------------------------------------------------------------------------
+
+ray_pairs = []
 
 for edge in edges:
     
@@ -274,14 +292,62 @@ for edge in edges:
     ray1_wrld = ray1_wrld[:3, 0]
     ray2_wrld = ray2_wrld[:3, 0]
     
-    # Visualize rays
-    ax3d.plot([translation_wrld_cam[0], ray1_wrld[0]],
-              [translation_wrld_cam[1], ray1_wrld[1]],
-              [translation_wrld_cam[2], ray1_wrld[2]],
-              color = 'k')
-    ax3d.plot(np.array([translation_wrld_cam[0], ray2_wrld[0]]),
-              np.array([translation_wrld_cam[1], ray2_wrld[1]]),
-              np.array([translation_wrld_cam[2], ray2_wrld[2]]),
-              color = 'k')
+    # Calculate plane formed by rays
+    ray1_vector = ray1_wrld - translation_wrld_cam
+    ray2_vector = ray2_wrld - translation_wrld_cam
+    plane_normal = np.cross(ray1_vector, ray2_vector)
+    plane_normal = plane_normal / np.linalg.norm(plane_normal)
+    plane_point = translation_wrld_cam
+    
+    # Find the closest floorplan edge
+    best_alignment_score = math.inf
+    best_distance_score = math.inf
+    for edge in floorplan_edges:
+        
+        floorplan_edge_vector = np.array([edge[2] - edge[0], 
+                                          edge[3] - edge[1],
+                                          0])
+        floorplan_edge_vector = floorplan_edge_vector / np.linalg.norm(floorplan_edge_vector)
+        
+        # Check alignment
+        alignment_score = abs(np.dot(plane_normal, floorplan_edge_vector))
+        if alignment_score <= best_alignment_score:
+            
+            # Edge is aligned so check distance
+            dist_1 = abs(np.dot(plane_normal, np.array([edge[0], edge[1], 0]) - plane_point))
+            dist_2 = abs(np.dot(plane_normal, np.array([edge[2], edge[3], 0]) - plane_point))
+            distance_score = dist_1 + dist_2
+            if distance_score < best_distance_score:
+                
+                # Update best choice of segment
+                best_edge = edge
+                best_alignment_score = alignment_score
+                best_distance_score = distance_score
+        
+    # Save rays
+    ray_pairs.append((translation_wrld_cam, ray1_wrld, ray2_wrld, best_edge))
+    
+# Plot first pair of rays
+t, r1, r2, be = ray_pairs[0]
+ray1_viz, = ax3d.plot([t[0], r1[0]],
+                      [t[1], r1[1]],
+                      [t[2], r1[2]], color='k')
+ray2_viz, = ax3d.plot([t[0], r2[0]],
+                      [t[1], r2[1]],
+                      [t[2], r2[2]], color='k')
+best_edge_viz, = ax3d.plot([be[0], be[2]],
+                           [be[1], be[3]],
+                           [0, 0], color = 'r')
+
+# Add slider to step between rays
+from matplotlib.widgets import Slider
+ax_slider = plt.axes([0.2, 0.02, 0.6, 0.03])
+slider = Slider(ax_slider, 'Ray Index', 0, len(ray_pairs)-1, valinit=0, valstep=1)
+
+slider.on_changed(updateRays)
+
+# -----------------------------------------------------------------------------
+# SHOW ALL PLOTS
+# -----------------------------------------------------------------------------
     
 plt.show()
