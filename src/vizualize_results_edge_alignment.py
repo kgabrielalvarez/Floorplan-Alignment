@@ -38,7 +38,10 @@ def calculateRay(u, v):
     z_p = ((1 - alpha**2 * beta * r**2) / 
            (alpha * math.sqrt(1 - (alpha - gamma) * beta * r**2) + gamma))
     
-    return np.array([x_p, y_p, z_p])
+    # Scaling factor for rays
+    ray_scale = 2000.0
+    
+    return np.array([[x_p*ray_scale], [y_p*ray_scale], [z_p*ray_scale], [1.0]])
 
 # Make axis of 3D plot equal 1:1:1
 def setAxisEqual(ax):
@@ -121,6 +124,10 @@ T_cam_imu = np.array([[0.017214474772216132, -0.0008034642120502422, -0.99985149
                       [0.9998263174555488, -0.007128426214556394, 0.017219769539067287, 0.015539085669546057],
                       [-0.007141203091335369, -0.9999742696614562, 0.0006806125511055194, -0.01575188948566258],
                       [0.0, 0.0, 0.0, 1.0]])
+
+T_imu_cam = np.eye(4)
+T_imu_cam[:3, :3] = T_cam_imu[:3, :3].T
+T_imu_cam[:3, 3] = -T_cam_imu[:3, :3].T @ T_cam_imu[:3, 3]
 
 # -----------------------------------------------------------------------------
 # PLOT RAW 3D TRAJECTORY
@@ -243,26 +250,38 @@ for edge in edges:
     timestap = edge[0]
     
     # Rays forming the plane containing the edge
-    ray1 = calculateRay(edge[1], edge[2])
-    ray2 = calculateRay(edge[3], edge[4])
+    ray1_cam = calculateRay(edge[1], edge[2])
+    ray2_cam = calculateRay(edge[3], edge[4])
     
     # Extrinsics
     # T_imu_wrld: IMU frame <-- world frame
     idx = np.argmin(np.abs(pose_timestamps - timestap))
     quat = pose_quats[idx, :]
-    R_wrld_imu = Rotation.from_quat(quat).as_matrix()
-    R_rotwrld_wrld = np.array([[np.cos(theta0), -np.sin(theta0), 0],
-                                [np.sin(theta0),  np.cos(theta0), 0],
-                                [0, 0, 1]])
-    R_wrld_imu = R_rotwrld_wrld @ R_wrld_imu
+    R_wrld_imu = R_rotwrld_wrld @ Rotation.from_quat(quat).as_matrix()
     translation_wrld_imu = pose_translations[idx, :].reshape(3, 1)
-    R_imu_wrld = R_wrld_imu.T
-    translation_imu_wrld = -R_wrld_imu.T @ translation_wrld_imu
-    T_imu_wrld = np.eye(4)
-    T_imu_wrld[:3, :3] = R_imu_wrld
-    T_imu_wrld[:3, 3] = translation_imu_wrld.flatten()
+    T_wrld_imu = np.eye(4)
+    T_wrld_imu[:3, :3] = R_wrld_imu
+    T_wrld_imu[:3, 3] = translation_wrld_imu.flatten()
     
-    # T_cam_wrld: camera frame <-- world frame
-    T_cam_wrld = T_cam_imu @ T_imu_wrld
+    # T_wrld_cam: world frame <-- camera frame
+    T_wrld_cam = T_wrld_imu @ T_imu_cam
+    translation_wrld_cam = T_wrld_cam[:3, 3]
+    
+    # Tranform the ray
+    ray1_wrld = T_wrld_cam @ ray1_cam
+    ray2_wrld = T_wrld_cam @ ray2_cam
+    # Keep only the first 3x elements
+    ray1_wrld = ray1_wrld[:3, 0]
+    ray2_wrld = ray2_wrld[:3, 0]
+    
+    # Visualize rays
+    ax3d.plot([translation_wrld_cam[0], ray1_wrld[0]],
+              [translation_wrld_cam[1], ray1_wrld[1]],
+              [translation_wrld_cam[2], ray1_wrld[2]],
+              color = 'k')
+    ax3d.plot(np.array([translation_wrld_cam[0], ray2_wrld[0]]),
+              np.array([translation_wrld_cam[1], ray2_wrld[1]]),
+              np.array([translation_wrld_cam[2], ray2_wrld[2]]),
+              color = 'k')
     
 plt.show()

@@ -120,10 +120,14 @@ private:
                                  cv::Point(1400, 400),
                                  cv::Point(1400, 450),
                                  cv::Point(625, 450)};
+                                //  {cv::Point(100, 1000),
+                                //  cv::Point(900, 1000),
+                                //  cv::Point(900, 1225),
+                                //  cv::Point(450, 1225)};
   std::vector<std::vector<cv::Point>> vector_of_rois_ = {roi_};
 
   // Image bounding box
-  cv::Rect img_bbox_ = cv::Rect(300, 0, 1075, 750);
+  cv::Rect img_bbox_ = cv::Rect(300, 0, 1075, 750); // (0, 800, 1100, 600)
 
   // Acceptable angle from horizontal
   const float acceptable_angle_ = 30.0f * CV_PI / 180.0f; // [rad]
@@ -132,7 +136,7 @@ private:
   const float acceptable_length_ = 75.0f; // [pixels]
 
   // Number of edges to keep
-  int num_edges_ = 3;
+  int num_edges_ = 20;
 
   // Define callback for lines
   void imageCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg)
@@ -142,6 +146,7 @@ private:
 
     // Check that we are receiving an image
     cv::Mat img = cv::imdecode(cv::Mat(msg->data), cv::IMREAD_GRAYSCALE);
+    // cv::flip(img, img, -1); // Flip img 180 deg
     cv::Mat img_color;
     cv::cvtColor(img, img_color, cv::COLOR_GRAY2BGR);
     if (img.empty())
@@ -277,7 +282,7 @@ private:
         double endY = static_cast<double>(kl.endPointY);
 
         // Save edge
-        if (edge_counter < num_edges_)
+        if (edge_counter < num_edges_+40 && edge_counter > 40)
         {
           // Image
           cv::Mat img_with_edge = all_images_[timestamp].clone();
