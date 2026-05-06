@@ -363,12 +363,6 @@ for edge in edges:
                     best_edge = edge
                     best_alignment_score = alignment_score
                     best_distance_score = distance_score
-                    
-    # Find projection of edge onto plane
-    # q1 = np.array([best_edge[0], best_edge[1], 0])
-    # q2 = np.array([best_edge[2], best_edge[3], 0])
-    # q1_proj = q1 - np.dot(plane_normal, q1 - plane_point) * plane_normal
-    # q2_proj = q2 - np.dot(plane_normal, q2 - plane_point) * plane_normal
         
     # Save rays
     ray_pairs.append((translation_wrld_cam, ray1_wrld, ray2_wrld, best_edge))
@@ -391,6 +385,212 @@ ax_slider = plt.axes([0.2, 0.02, 0.6, 0.03])
 slider = Slider(ax_slider, 'Ray Index', 0, len(ray_pairs)-1, valinit=0, valstep=1)
 
 slider.on_changed(updateRays)
+
+# -----------------------------------------------------------------------------
+# CALCULATE ROTATION CORRECTION
+# -----------------------------------------------------------------------------
+
+print('Number of edges considered = ', len(ray_pairs))
+possible_theta_corrections = np.linspace(-20, 20, 81) * np.pi/180
+best_thetas = np.zeros(len(ray_pairs))
+for idx in range(len(ray_pairs)):
+    
+    # Raw data
+    pose_origin, ray_1, ray_2, edge = ray_pairs[idx]
+    
+    # Calculate vectors
+    ray_vector_1 = ray_1 - pose_origin
+    ray_vector_2 = ray_2 - pose_origin
+    edge_vector = np.array([edge[2]-edge[0],
+                            edge[3]-edge[1],
+                            0])
+    
+    # Consider all possible rotations
+    best_score = np.inf
+    for possible_theta in possible_theta_corrections:
+        possible_rot = np.array([[np.cos(possible_theta), -np.sin(possible_theta), 0],
+                                 [np.sin(possible_theta), np.cos(possible_theta), 0],
+                                 [0, 0, 1]])
+        rotated_ray_vector_1 = possible_rot @ ray_vector_1
+        rotated_ray_vector_2 = possible_rot @ ray_vector_2
+        plane_normal = np.cross(rotated_ray_vector_1, rotated_ray_vector_2)
+        alignment_score = abs(np.dot(edge_vector, plane_normal))
+        if alignment_score < best_score:
+            best_score = alignment_score
+            best_thetas[idx] = possible_theta
+            
+# Average theta
+theta_correction = np.average(best_thetas)
+print('Theta correction = ', theta_correction*180/np.pi, ' deg')
+
+# Visualize rotation corrections
+rotation_correction_plot = plt.figure()
+ax_rotation_correction_plot = rotation_correction_plot.add_subplot()
+ax_rotation_correction_plot.set_xlabel('ray pair index')
+ax_rotation_correction_plot.set_ylabel('angle [deg]')
+ray_indices = np.linspace(0, len(ray_pairs), len(ray_pairs))
+ax_rotation_correction_plot.scatter(ray_indices, best_thetas*180/np.pi)
+
+# -----------------------------------------------------------------------------
+# CALCULATE TRANSLATION CORRECTION
+# -----------------------------------------------------------------------------
+
+ray_vectors_1 = []
+ray_vectors_2 = []
+rotated_ray_vectors_1 = []
+rotated_ray_vectors_2 = []
+edge_vectors = []
+edge_vertices = []
+ray_origin_vertices = []
+ray_origin_vertices_rotated = []
+rotation_matrix = np.array([[np.cos(theta_correction), -np.sin(theta_correction), 0],
+                            [np.sin(theta_correction), np.cos(theta_correction), 0],
+                            [0, 0, 1]])
+for idx in range(len(ray_pairs)):
+    
+    # Load data
+    pose_origin, ray_1, ray_2, edge = ray_pairs[idx]
+    
+    # Define vectors
+    pose_origin_rotated = rotation_matrix @ pose_origin.T
+    ray_vector_1 = ray_1 - pose_origin
+    ray_vector_2 = ray_2 - pose_origin
+    rotated_ray_vector_1 = rotation_matrix @ ray_vector_1
+    rotated_ray_vector_2 = rotation_matrix @ ray_vector_2
+    edge_vector = np.array([edge[2]-edge[0],
+                            edge[3]-edge[1],
+                            0])
+    
+    # Check that we have a valid edge
+    if np.all(edge_vector == 0):
+        continue
+    
+    edge_vertex = np.array([edge[0], edge[1], 0])
+    
+    # Save vectors
+    ray_vectors_1.append(ray_vector_1)
+    ray_vectors_2.append(ray_vector_2)
+    rotated_ray_vectors_1.append(rotated_ray_vector_1)
+    rotated_ray_vectors_2.append(rotated_ray_vector_2)
+    edge_vectors.append(edge_vector)
+    edge_vertices.append(edge_vertex)
+    ray_origin_vertices.append(pose_origin)
+    ray_origin_vertices_rotated.append(pose_origin_rotated)
+    
+possible_x_translations = np.linspace(-250, 250, 3)
+possible_y_translations = np.linspace(-250, 250, 3)
+possible_z_translations = np.linspace(-500.0, 500.0, 11)
+best_total_dists = np.inf
+for delta_x in possible_x_translations:
+    for delta_y in possible_y_translations:
+        for delta_z in possible_z_translations:
+            
+            total_dists = 0
+            for idx_v in range(len(rotated_ray_vectors_1)):
+                
+                # Define ray and edge vectors
+                rotated_ray_vector_1 = rotated_ray_vectors_1[idx_v]
+                rotated_ray_vector_2 = rotated_ray_vectors_2[idx_v]
+                edge_vector = edge_vectors[idx_v]
+                
+                # Plane vectors
+                plane_vector_1 = np.cross(rotated_ray_vector_1, edge_vector)
+                plane_vector_2 = np.cross(rotated_ray_vector_2, edge_vector)
+            
+                # Points on the planes
+                vertex_edge = edge_vertices[idx_v]
+                ray_origin_vertex = ray_origin_vertices_rotated[idx_v] + np.array([delta_x, delta_y, delta_z])
+                
+                # Distances between the planes
+                # Based on the calculation of the distance between a line and a line described here:
+                # https://math.stackexchange.com/questions/210848/finding-the-shortest-distance-between-two-lines
+                D_1_edge = -np.dot(plane_vector_1, vertex_edge)
+                D_1_ray = -np.dot(plane_vector_1, ray_origin_vertex)
+                D_2_edge = -np.dot(plane_vector_2, vertex_edge)
+                D_2_ray = -np.dot(plane_vector_2, ray_origin_vertex)
+                dist_1 = abs(D_1_edge - D_1_ray)/np.linalg.norm(plane_vector_1)
+                dist_2 = abs(D_2_edge - D_2_ray)/np.linalg.norm(plane_vector_2)
+                total_dists = total_dists + dist_1 + dist_2
+                
+            if total_dists < best_total_dists:
+                best_total_dists = total_dists
+                best_delta_x = delta_x
+                best_delta_y = delta_y
+                best_delta_z = delta_z
+                
+print('delta x = ', best_delta_x, ', delta y = ', best_delta_y, ', delta z = ', best_delta_z)
+translation_vector = np.array([best_delta_x, best_delta_y, best_delta_z])
+
+# -----------------------------------------------------------------------------
+# PLOT ORIGINAL AND CORRECTED PATHS WITH RAYS
+# -----------------------------------------------------------------------------
+
+fig_rays_raw = plt.figure()
+ax_rays_raw = fig_rays_raw.add_subplot(projection = '3d')
+ax_rays_raw.set_xlabel('x-axis')
+ax_rays_raw.set_ylabel('y-axis')
+ax_rays_raw.set_zlabel('z-axis')
+ax_rays_raw.set_title('Before rotation and translation')
+
+fig_rays_corrected = plt.figure()
+ax_rays_corrected = fig_rays_corrected.add_subplot(projection = '3d')
+ax_rays_corrected.set_xlabel('x-axis')
+ax_rays_corrected.set_ylabel('y-axis')
+ax_rays_corrected.set_zlabel('z-axis')
+ax_rays_corrected.set_title('After rotation and translation')
+
+# Floorplan edges
+for edge in floorplan_edges:
+    x = [edge[0], edge[2]]
+    y = [edge[1], edge[3]]
+    z = [0, 0]
+    ax_rays_raw.plot(x, y, z, color = 'black')
+    ax_rays_corrected.plot(x, y, z, color = 'black')
+    
+# Path uncorrected
+ax_rays_raw.plot(pose_translations[:, 0],
+                 pose_translations[:, 1],
+                 pose_translations[:, 2],
+                 color = 'red')
+pose_translations_rotated = rotation_matrix @ pose_translations.T + translation_vector[:, None]
+ax_rays_corrected.plot(pose_translations_rotated[0, :],
+                       pose_translations_rotated[1, :],
+                       pose_translations_rotated[2, :],
+                       color = 'red')
+
+# Set axis equal
+setAxisEqual(ax_rays_raw)
+setAxisEqual(ax_rays_corrected)
+
+# Rays
+ray_origin_vertices_rotated = np.array(ray_origin_vertices_rotated) + translation_vector
+for idx in range(0, len(ray_vectors_1), 400):
+    
+    # Uncorrected
+    ray_origin_vertex = ray_origin_vertices[idx]
+    ray_vector_1 = ray_vectors_1[idx]
+    ray_vector_2 = ray_vectors_2[idx]
+    x_1 = [ray_origin_vertex[0], ray_origin_vertex[0] + ray_vector_1[0]]
+    y_1 = [ray_origin_vertex[1], ray_origin_vertex[1] + ray_vector_1[1]]
+    z_1 = [ray_origin_vertex[2], ray_origin_vertex[2] + ray_vector_1[2]]
+    x_2 = [ray_origin_vertex[0], ray_origin_vertex[0] + ray_vector_2[0]]
+    y_2 = [ray_origin_vertex[1], ray_origin_vertex[1] + ray_vector_2[1]]
+    z_2 = [ray_origin_vertex[2], ray_origin_vertex[2] + ray_vector_2[2]]
+    ax_rays_raw.plot(x_1, y_1, z_1, color = 'green')
+    ax_rays_raw.plot(x_2, y_2, z_2, color = 'green')
+    
+    # Corrected
+    ray_origin_vertex = ray_origin_vertices_rotated[idx]
+    ray_vector_1 = rotated_ray_vectors_1[idx]
+    ray_vector_2 = rotated_ray_vectors_2[idx]
+    x_1 = [ray_origin_vertex[0], ray_origin_vertex[0] + ray_vector_1[0]]
+    y_1 = [ray_origin_vertex[1], ray_origin_vertex[1] + ray_vector_1[1]]
+    z_1 = [ray_origin_vertex[2], ray_origin_vertex[2] + ray_vector_1[2]]
+    x_2 = [ray_origin_vertex[0], ray_origin_vertex[0] + ray_vector_2[0]]
+    y_2 = [ray_origin_vertex[1], ray_origin_vertex[1] + ray_vector_2[1]]
+    z_2 = [ray_origin_vertex[2], ray_origin_vertex[2] + ray_vector_2[2]]
+    ax_rays_corrected.plot(x_1, y_1, z_1, color = 'green')
+    ax_rays_corrected.plot(x_2, y_2, z_2, color = 'green')
 
 # -----------------------------------------------------------------------------
 # SHOW ALL PLOTS

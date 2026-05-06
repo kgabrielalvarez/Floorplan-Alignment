@@ -111,7 +111,6 @@ for ray_vector in ray_vectors:
 possible_x_translations = np.linspace(-3.0, 3.0, 61)
 possible_y_translations = np.linspace(-3.0, 3.0, 61)
 possible_z_translations = np.linspace(-3.0, 3.0, 61)
-print(possible_x_translations)
 best_total_dists = np.inf
 for delta_x in possible_x_translations:
     for delta_y in possible_y_translations:
