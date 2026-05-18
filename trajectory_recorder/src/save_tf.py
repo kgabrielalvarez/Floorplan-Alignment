@@ -37,7 +37,7 @@ class SaveStaticMapGlobalTF(Node):
 
         self.parent_frame = self.get_parameter("parent_frame").value
         self.child_frame = self.get_parameter("child_frame").value
-        self.output_file = Path("./src/Floorplan-Alignment/trajectory_recorder/trajectories/orientations/orientation.json")
+            self.output_file = Path("./src/Floorplan-Alignment/trajectory_recorder/trajectories/orientations/orientation.json")
 
         # Important for /tf_static so late subscribers can still receive static TFs
         qos = QoSProfile(

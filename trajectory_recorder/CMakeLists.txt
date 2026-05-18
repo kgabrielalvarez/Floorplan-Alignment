@@ -21,6 +21,7 @@ install(TARGETS
 
 install(PROGRAMS
   src/save_tf.py
+  src/image_subscriber.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
